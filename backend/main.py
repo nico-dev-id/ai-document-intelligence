@@ -175,86 +175,114 @@ def hapus_dokumen(
 # AI/RAG ENDPOINTS
 # ==================
 
-@app.post("/documents/{doc_id}/ask")
-def tanya_dokumen(
-    doc_id: int,
+@app.post("/ask")
+def tanya_semua_dokumen(
     data: PertanyaanInput,
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Cek dokumen
-    doc = db.query(DocumentModel).filter(
-        DocumentModel.id == doc_id,
+    # Ambil semua dokumen user
+    docs = db.query(DocumentModel).filter(
         DocumentModel.user_id == current_user.id
-    ).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Dokumen tidak ditemukan!")
-
-    # Load dokumen
-    if doc.path_file.endswith('.pdf'):
-        loader = PyPDFLoader(doc.path_file)
-    else:
-        loader = TextLoader(doc.path_file, encoding="utf-8")
-
-    dokumen = loader.load()
-
-    # Potong dokumen
+    ).all()
+    
+    if not docs:
+        raise HTTPException(status_code=404, detail="Belum ada dokumen yang diupload!")
+    
+    # Load semua dokumen
+    all_chunks = []
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = splitter.split_documents(dokumen)
-
-    # Buat vector database
+    
+    for doc in docs:
+        try:
+            if doc.path_file.endswith('.pdf'):
+                loader = PyPDFLoader(doc.path_file)
+            else:
+                loader = TextLoader(doc.path_file, encoding="utf-8")
+            
+            dokumen = loader.load()
+            
+            # Tambah metadata nama file
+            for d in dokumen:
+                d.metadata["nama_file"] = doc.nama_file
+                d.metadata["doc_id"] = doc.id
+            
+            chunks = splitter.split_documents(dokumen)
+            all_chunks.extend(chunks)
+        except Exception as e:
+            continue
+    
+    if not all_chunks:
+        raise HTTPException(status_code=500, detail="Gagal memproses dokumen!")
+    
+    # Buat vector database dari semua dokumen
     embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
     vectordb = Chroma.from_documents(
-        chunks,
+        all_chunks,
         embeddings,
-        persist_directory=f"chroma_db/doc_{doc_id}"
+        persist_directory=f"chroma_db/user_{current_user.id}"
     )
-    retriever = vectordb.as_retriever(search_kwargs={"k": 3})
-
+    retriever = vectordb.as_retriever(search_kwargs={"k": 5})
+    
     # Cari konteks relevan
     docs_relevan = retriever.invoke(data.pertanyaan)
-    konteks = "\n".join([d.page_content for d in docs_relevan])
-
+    
+    # Kelompokkan berdasarkan dokumen sumber
+    konteks_list = []
+    for d in docs_relevan:
+        nama_file = d.metadata.get("nama_file", "unknown")
+        konteks_list.append(f"[Dari: {nama_file}]\n{d.page_content}")
+    
+    konteks = "\n\n".join(konteks_list)
+    
     # Tanya AI
     llm = ChatGroq(
         api_key=os.environ.get("GROQ_API_KEY"),
         model_name="llama-3.3-70b-versatile"
     )
-
-    prompt = f"""Berdasarkan dokumen berikut:
+    
+    prompt = f"""Kamu adalah asisten AI yang membantu menganalisis dokumen.
+    
+Berikut adalah potongan relevan dari dokumen-dokumen yang tersedia:
 {konteks}
 
-Jawab pertanyaan: {data.pertanyaan}
-Jawab dalam bahasa Indonesia dengan jelas dan lengkap."""
+Berdasarkan dokumen di atas, jawab pertanyaan berikut:
+{data.pertanyaan}
+
+Jawab dalam bahasa Indonesia dengan jelas. 
+Sebutkan dari dokumen mana informasi tersebut berasal."""
 
     jawaban = llm.invoke(prompt)
-
-    # Simpan ke database
+    
+    # Simpan ke conversations
+    # Gunakan doc_id pertama yang relevan
+    doc_id_relevan = docs_relevan[0].metadata.get("doc_id", docs[0].id) if docs_relevan else docs[0].id
+    
     conv = ConversationModel(
         user_id=current_user.id,
-        document_id=doc_id,
+        document_id=doc_id_relevan,
         pertanyaan=data.pertanyaan,
         jawaban=jawaban.content
     )
     db.add(conv)
     db.commit()
-
+    
     return {
         "pertanyaan": data.pertanyaan,
         "jawaban": jawaban.content,
-        "dokumen": doc.nama_file
+        "sumber": [d.metadata.get("nama_file") for d in docs_relevan]
     }
 
-@app.get("/documents/{doc_id}/conversations")
-def get_conversations(
-    doc_id: int,
+# Endpoint untuk lihat semua conversations user
+@app.get("/conversations")
+def get_all_conversations(
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     convs = db.query(ConversationModel).filter(
-        ConversationModel.document_id == doc_id,
         ConversationModel.user_id == current_user.id
-    ).all()
+    ).order_by(ConversationModel.created_at.desc()).all()
+    
     return {
         "total": len(convs),
         "conversations": [
