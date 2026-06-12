@@ -191,7 +191,7 @@ def tanya_semua_dokumen(
     
     # Load semua dokumen
     all_chunks = []
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     
     for doc in docs:
         try:
@@ -215,14 +215,13 @@ def tanya_semua_dokumen(
     if not all_chunks:
         raise HTTPException(status_code=500, detail="Gagal memproses dokumen!")
     
-    # Buat vector database dari semua dokumen
+    # Buat vector database dari semua dokumen (in-memory, selalu fresh)
     embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
     vectordb = Chroma.from_documents(
         all_chunks,
-        embeddings,
-        persist_directory=f"chroma_db/user_{current_user.id}"
+        embeddings
     )
-    retriever = vectordb.as_retriever(search_kwargs={"k": 5})
+    retriever = vectordb.as_retriever(search_kwargs={"k": 8})
     
     # Cari konteks relevan
     docs_relevan = retriever.invoke(data.pertanyaan)
@@ -256,13 +255,28 @@ Sebutkan dari dokumen mana informasi tersebut berasal."""
     
     # Simpan ke conversations
     # Gunakan doc_id pertama yang relevan
-    doc_id_relevan = docs_relevan[0].metadata.get("doc_id", docs[0].id) if docs_relevan else docs[0].id
+    doc_id_relevan = None
+
+    if docs_relevan:
+        meta_doc_id = docs_relevan[0].metadata.get("doc_id")
+        if meta_doc_id:
+            # Cek apakah dokumen masih ada
+            doc_check = db.query(DocumentModel).filter(
+                DocumentModel.id == meta_doc_id
+            ).first()
+            if doc_check:
+                doc_id_relevan = meta_doc_id
     
-    conv = ConversationModel(
-        user_id=current_user.id,
-        document_id=doc_id_relevan,
-        pertanyaan=data.pertanyaan,
-        jawaban=jawaban.content
+    # Kalau tidak ada doc_id yang valid, pakai dokumen pertama user
+    if not doc_id_relevan and docs:
+        doc_id_relevan = docs[0].id
+
+    if doc_id_relevan:
+        conv = ConversationModel(
+            user_id=current_user.id,
+            document_id=doc_id_relevan,
+            pertanyaan=data.pertanyaan,
+            jawaban=jawaban.content
     )
     db.add(conv)
     db.commit()
