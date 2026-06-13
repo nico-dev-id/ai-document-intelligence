@@ -242,14 +242,16 @@ def tanya_semua_dokumen(
     
     prompt = f"""Kamu adalah asisten AI yang membantu menganalisis dokumen.
     
-Berikut adalah potongan relevan dari dokumen-dokumen yang tersedia:
-{konteks}
+    Berikut adalah potongan relevan dari dokumen-dokumen yang tersedia:
+    {konteks}
 
-Berdasarkan dokumen di atas, jawab pertanyaan berikut:
-{data.pertanyaan}
+    Pertanyaan: {data.pertanyaan}
 
-Jawab dalam bahasa Indonesia dengan jelas. 
-Sebutkan dari dokumen mana informasi tersebut berasal."""
+    INSTRUKSI:
+    - Jika pertanyaan bersifat umum dan ada beberapa dokumen berbeda topik, jawab untuk SETIAP dokumen secara terpisah
+    - Jika pertanyaan spesifik, fokus jawab berdasarkan dokumen yang relevan
+    - Sebutkan nama dokumen sumber untuk setiap informasi
+    - Jawab dalam bahasa Indonesia dengan jelas"""
 
     jawaban = llm.invoke(prompt)
     
