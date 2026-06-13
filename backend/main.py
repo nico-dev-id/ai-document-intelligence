@@ -1,5 +1,7 @@
 import os
 import shutil
+import uuid
+import chromadb
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -215,14 +217,20 @@ def tanya_semua_dokumen(
     if not all_chunks:
         raise HTTPException(status_code=500, detail="Gagal memproses dokumen!")
     
-    # Buat vector database dari semua dokumen (in-memory, selalu fresh)
+    # Buat vector database dari semua dokumen (unique collection, auto-cleanup)
     embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+
+    client = chromadb.EphemeralClient()
+    collection_name = f"user_{current_user.id}_{uuid.uuid4().hex[:8]}"
+
     vectordb = Chroma.from_documents(
         all_chunks,
-        embeddings
+        embeddings,
+        client=client,
+        collection_name=collection_name
     )
     retriever = vectordb.as_retriever(search_kwargs={"k": 8})
-    
+
     # Cari konteks relevan
     docs_relevan = retriever.invoke(data.pertanyaan)
     
