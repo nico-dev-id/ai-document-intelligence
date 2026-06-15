@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 
-const API = 'http://localhost:8000'
+const API = 'https://nico-dev-id-ai-document-intelligence-api.hf.space'
 
 export default function Dashboard() {
   const [user, setUser] = useState(null)
