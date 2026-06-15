@@ -2,6 +2,7 @@ import os
 import shutil
 import uuid
 import chromadb
+from supabase import create_client, Client
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -17,6 +18,12 @@ from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_groq import ChatGroq
 
 load_dotenv()
+
+# Supabase client
+supabase: Client = create_client(
+    os.environ.get("SUPABASE_URL"),
+    os.environ.get("SUPABASE_KEY")
+)
 
 app = FastAPI(title="AI Document Intelligence")
 
@@ -102,23 +109,26 @@ def upload_dokumen(
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Cek tipe file
     if not file.filename.endswith(('.pdf', '.txt')):
         raise HTTPException(status_code=400, detail="Hanya file PDF dan TXT!")
 
-    # Simpan file
-    user_folder = f"uploads/user_{current_user.id}"
-    os.makedirs(user_folder, exist_ok=True)
-    path_file = f"{user_folder}/{file.filename}"
+    # Baca isi file
+    file_content = file.file.read()
+    
+    # Upload ke Supabase Storage
+    file_path = f"user_{current_user.id}/{file.filename}"
+    
+    supabase.storage.from_("documents").upload(
+        path=file_path,
+        file=file_content,
+        file_options={"content-type": file.content_type}
+    )
 
-    with open(path_file, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    # Simpan ke database
+    # Simpan metadata ke database
     doc = DocumentModel(
         user_id=current_user.id,
         nama_file=file.filename,
-        path_file=path_file
+        path_file=file_path  # simpan path di Supabase Storage
     )
     db.add(doc)
     db.commit()
@@ -165,9 +175,11 @@ def hapus_dokumen(
     if not doc:
         raise HTTPException(status_code=404, detail="Dokumen tidak ditemukan!")
 
-    # Hapus file fisik
-    if os.path.exists(doc.path_file):
-        os.remove(doc.path_file)
+    # Hapus dari Supabase Storage
+    try:
+        supabase.storage.from_("documents").remove([doc.path_file])
+    except:
+        pass
 
     db.delete(doc)
     db.commit()
@@ -191,27 +203,40 @@ def tanya_semua_dokumen(
     if not docs:
         raise HTTPException(status_code=404, detail="Belum ada dokumen yang diupload!")
     
-    # Load semua dokumen
+    # Load semua dokumen dari Supabase Storage
     all_chunks = []
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    
+
     for doc in docs:
         try:
+            # Download file dari Supabase Storage
+            file_content = supabase.storage.from_("documents").download(doc.path_file)
+            
+            # Simpan sementara untuk diproses
+            temp_path = f"/tmp/{doc.nama_file}"
+            with open(temp_path, "wb") as f:
+                f.write(file_content)
+            
+            # Load dokumen
             if doc.path_file.endswith('.pdf'):
-                loader = PyPDFLoader(doc.path_file)
+                loader = PyPDFLoader(temp_path)
             else:
-                loader = TextLoader(doc.path_file, encoding="utf-8")
+                loader = TextLoader(temp_path, encoding="utf-8")
             
             dokumen = loader.load()
             
-            # Tambah metadata nama file
             for d in dokumen:
                 d.metadata["nama_file"] = doc.nama_file
                 d.metadata["doc_id"] = doc.id
             
             chunks = splitter.split_documents(dokumen)
             all_chunks.extend(chunks)
+            
+            # Hapus file temporary
+            os.remove(temp_path)
+            
         except Exception as e:
+            print(f"Error loading {doc.nama_file}: {e}")
             continue
     
     if not all_chunks:
