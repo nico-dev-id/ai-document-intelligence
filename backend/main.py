@@ -20,10 +20,12 @@ from langchain_groq import ChatGroq
 load_dotenv()
 
 # Supabase client
-supabase: Client = create_client(
-    os.environ.get("SUPABASE_URL"),
-    os.environ.get("SUPABASE_KEY")
-)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+
+supabase = None
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI(title="AI Document Intelligence")
 
@@ -111,6 +113,9 @@ def upload_dokumen(
 ):
     if not file.filename.endswith(('.pdf', '.txt')):
         raise HTTPException(status_code=400, detail="Hanya file PDF dan TXT!")
+
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase tidak terkonfigurasi!")
 
     # Baca isi file
     file_content = file.file.read()
