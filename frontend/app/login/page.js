@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 
+const API = 'https://nico-dev-id-ai-document-intelligence-api.hf.space'
+
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -14,19 +16,30 @@ export default function Login() {
       return
     }
     setLoading(true)
-    const response = await fetch('https://nico-dev-id-ai-document-intelligence-api.hf.space/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `username=${email}&password=${password}`
-    })
-    const data = await response.json()
-    setLoading(false)
+    setPesan('Menghubungkan ke server...')
 
-    if (response.ok) {
+    try {
+      const response = await fetch(`${API}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `username=${email}&password=${password}`
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        setPesan(data.detail || 'Login gagal!')
+        setLoading(false)
+        return
+      }
+
+      const data = await response.json()
+      setLoading(false)
       localStorage.setItem('token', data.access_token)
       window.location.href = '/dashboard'
-    } else {
-      setPesan(data.detail || 'Login gagal!')
+
+    } catch (error) {
+      setPesan('Server sedang starting up, tunggu 1-2 menit dan coba lagi! 🚀')
+      setLoading(false)
     }
   }
 
@@ -57,14 +70,18 @@ export default function Login() {
           className="w-full border border-gray-300 p-3 rounded-lg mb-4 focus:outline-none focus:border-indigo-500 text-gray-800"
         />
 
-        {pesan && <p className="text-red-500 text-sm mb-4">{pesan}</p>}
+        {pesan && (
+          <p className={`text-sm mb-4 ${pesan.includes('🚀') ? 'text-blue-500' : pesan.includes('Menghubungkan') ? 'text-gray-500' : 'text-red-500'}`}>
+            {pesan}
+          </p>
+        )}
 
         <button
           onClick={handleLogin}
           disabled={loading}
           className="w-full bg-indigo-600 text-white py-3 rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium transition"
         >
-          {loading ? 'Masuk...' : 'Masuk'}
+          {loading ? 'Menghubungkan...' : 'Masuk'}
         </button>
 
         <p className="text-center text-sm mt-4 text-gray-600">
